@@ -21,11 +21,11 @@ import ConfirmDialog from '../../components/ConfirmDialog';
 
 interface MyTeam {
   team: Team;
-  currentUserId: string; // ต้องรู้ว่า "ตัวเอง" คือใครในทีม เพื่อเช็คสิทธิ์
+  currentUserId: string; // need to know who "self" is within the team, for permission checks
   onDisband: () => void;
   onUpdateMember: (memberId: string, data: PersonalForm) => void;
   onUpdateTeam: (updates: Pick<Team, 'name' | 'game' | 'description' | 'maxMembers' | 'social' | 'logo'>) => void;
-  onRemoveMember: (memberId: string) => void; // กัปตันลบสมาชิกออกจากทีม
+  onRemoveMember: (memberId: string) => void; // captain removes a member from the team
 }
 
 export default function MyTeam({
@@ -36,11 +36,11 @@ export default function MyTeam({
   onUpdateTeam,
   onRemoveMember,
 }: MyTeam) {
-  // เก็บทั้ง member ที่กำลังแก้ และสิทธิ์ (isSelf) แบบ explicit ไม่พึ่งพาการเทียบ id ที่อาจไม่ตรงกัน
+  // Store both the member being edited and the permission (isSelf) explicitly, rather than relying on an id comparison that might not match
   const [editingTarget, setEditingTarget] = useState<{ member: Member; isSelf: boolean } | null>(null);
   const [isEditingTeam, setIsEditingTeam] = useState(false);
   const [isAddingMember, setIsAddingMember] = useState(false);
-  const [removingMember, setRemovingMember] = useState<Member | null>(null); // สมาชิกที่กำลังจะถูกลบ (รอ confirm)
+  const [removingMember, setRemovingMember] = useState<Member | null>(null); // member about to be removed (awaiting confirm)
 
   const isRosterFull = team.members.length >= (team.maxMembers ?? 5);
 
@@ -50,15 +50,15 @@ export default function MyTeam({
     team.members[0];
   const isCaptain = !!currentUserMember?.isOwner;
 
-  // เปิดฟอร์มของ "ตัวเอง" เสมอ ไม่ว่า currentUserId จะตรงกับ id เป๊ะหรือไม่
+  // Always opens "self's" form, regardless of whether currentUserId matches the id exactly
   const handleOpenSelfForm = () => {
     if (currentUserMember) setEditingTarget({ member: currentUserMember, isSelf: true });
   };
-  // กัปตันเปิดฟอร์มของสมาชิกคนอื่นเพื่อกำหนด Role เท่านั้น (ไม่ใช่ตัวเอง)
+  // Captain opens another member's form only to set their Role (not their own)
   const handleOpenRoleForm = (member: Member) => setEditingTarget({ member, isSelf: false });
   const handleCloseForm = () => setEditingTarget(null);
 
-  // กัปตันลบสมาชิกออกจากทีม — เปิด confirm dialog ก่อนเสมอ
+  // Captain removes a member from the team — always opens the confirm dialog first
   const handleConfirmRemove = () => {
     if (removingMember) onRemoveMember(removingMember.userid);
     setRemovingMember(null);
@@ -122,7 +122,7 @@ export default function MyTeam({
           </Box>
 
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
-            {/* การส่งใบสมัครทัวร์นาเมนต์ย้ายไปทำที่หน้า Tournament Hub แล้ว (สมัครผ่านปุ่ม Join ในทัวร์นาเมนต์นั้นๆ โดยตรง) */}
+            {/* Tournament application submission has moved to the Tournament Hub page (apply directly via the Join button on that tournament) */}
             <Button variant="outlined" color="error" size="small" onClick={onDisband} sx={{ textTransform: 'none' }}>
               Disband Team
             </Button>
@@ -172,7 +172,7 @@ export default function MyTeam({
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
           {team.members.map((member) => {
             const isSelf = currentUserMember?.userid === member.userid;
-            // position ถูกบังคับเสมอ: คนสร้างทีม (isOwner) = Captain, นอกนั้น = Member
+            // position is always enforced: the team creator (isOwner) = Captain, everyone else = Member
             const position: PersonalForm['position'] = member.isOwner ? 'Captain' : 'Member';
 
             return (
@@ -278,7 +278,7 @@ export default function MyTeam({
                     />
                   )}
 
-                  {/* กัปตันเท่านั้นที่ตั้งค่า Role (starter/Substitute) ให้สมาชิกคนอื่นได้ */}
+                  {/* Only the captain can set the Role (starter/Substitute) for other members */}
                   {isCaptain && !isSelf && (
                     <Button
                       size="small"
@@ -290,7 +290,7 @@ export default function MyTeam({
                     </Button>
                   )}
 
-                  {/* กัปตันเท่านั้นที่ลบสมาชิกได้ ลบตัวเองหรือ Owner ไม่ได้ */}
+                  {/* Only the captain can remove members — cannot remove themselves or the Owner */}
                   {isCaptain && !isSelf && !member.isOwner && (
                     <IconButton
                       size="small"
@@ -348,9 +348,9 @@ export default function MyTeam({
 
       {removingMember && (
         <ConfirmDialog
-          title="ลบสมาชิก"
-          description={`ต้องการลบ "${removingMember.name}" ออกจากทีมใช่หรือไม่? การลบไม่สามารถย้อนกลับได้`}
-          confirmLabel="ลบสมาชิก"
+          title="Remove Member"
+          description={`Are you sure you want to remove "${removingMember.name}" from the team? This action cannot be undone.`}
+          confirmLabel="Remove Member"
           onConfirm={handleConfirmRemove}
           onClose={() => setRemovingMember(null)}
         />
