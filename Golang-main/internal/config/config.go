@@ -1,54 +1,45 @@
 package config
 
 import (
-    "fmt"
-    "os"
-    "time"
+	"fmt"
+	"os"
 )
 
 // Config holds application settings loaded from environment variables.
+//
+// The backend never talks to Supabase Auth's REST API directly — it only
+// needs (1) the project's Postgres connection string, to reach the same
+// database Supabase manages, and (2) the project's JWT secret, to verify
+// access tokens the frontend already obtained from the Supabase JS client.
 type Config struct {
-    DBHost      string
-    DBPort      string
-    DBUser      string
-    DBPassword  string
-    DBName      string
-    JWTSecret   string
-    JWTExpiresIn time.Duration
-    ServerPort  string
+	DatabaseURL       string // Supabase dashboard: Project Settings -> Database -> Connection string (URI)
+	SupabaseJWTSecret string // Supabase dashboard: Project Settings -> API -> JWT Secret
+	ServerPort        string
+	UploadDir         string // local disk folder for Portfolio / DocumentURL / ProofImageURL / PaymentEvidence files
 }
 
 // LoadConfig reads environment variables and returns a typed configuration.
 func LoadConfig() (*Config, error) {
-    port := os.Getenv("SERVER_PORT")
-    if port == "" {
-        port = "8080"
-    }
+	port := os.Getenv("SERVER_PORT")
+	if port == "" {
+		port = "8080"
+	}
 
-    expiresIn := os.Getenv("JWT_EXPIRES_IN")
-    if expiresIn == "" {
-        expiresIn = "24h"
-    }
+	uploadDir := os.Getenv("UPLOAD_DIR")
+	if uploadDir == "" {
+		uploadDir = "./uploads"
+	}
 
-    duration, err := time.ParseDuration(expiresIn)
-    if err != nil {
-        return nil, fmt.Errorf("invalid JWT_EXPIRES_IN: %w", err)
-    }
+	cfg := &Config{
+		DatabaseURL:       os.Getenv("DATABASE_URL"),
+		SupabaseJWTSecret: os.Getenv("SUPABASE_JWT_SECRET"),
+		ServerPort:        port,
+		UploadDir:         uploadDir,
+	}
 
-    cfg := &Config{
-        DBHost:      os.Getenv("DB_HOST"),
-        DBPort:      os.Getenv("DB_PORT"),
-        DBUser:      os.Getenv("DB_USER"),
-        DBPassword:  os.Getenv("DB_PASSWORD"),
-        DBName:      os.Getenv("DB_NAME"),
-        JWTSecret:   os.Getenv("JWT_SECRET"),
-        JWTExpiresIn: duration,
-        ServerPort:  port,
-    }
+	if cfg.DatabaseURL == "" || cfg.SupabaseJWTSecret == "" {
+		return nil, fmt.Errorf("missing required environment variables: DATABASE_URL and SUPABASE_JWT_SECRET must be set")
+	}
 
-    if cfg.DBHost == "" || cfg.DBPort == "" || cfg.DBUser == "" || cfg.DBPassword == "" || cfg.DBName == "" || cfg.JWTSecret == "" {
-        return nil, fmt.Errorf("missing required environment variables")
-    }
-
-    return cfg, nil
+	return cfg, nil
 }

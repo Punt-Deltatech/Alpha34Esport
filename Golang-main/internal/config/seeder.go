@@ -2,112 +2,35 @@ package config
 
 import (
 	"log"
-	"time"
+
+	"gorm.io/gorm"
 
 	"github.com/SA/Golang-Backend-Example/internal/models"
-	"github.com/SA/Golang-Backend-Example/internal/utils"
-	"gorm.io/gorm"
 )
 
-// SeedDatabase populates the database with initial data.
+// defaultRoles are the RBAC roles named in the original spec (Admin,
+// Organizer, Team Manager, Player) plus Referee, needed by the
+// Registration & Screening and Match Results modules.
+var defaultRoles = []string{"Admin", "Organizer", "TeamManager", "Player", "Referee"}
+
+// SeedDatabase ensures the fixed set of RBAC roles exists. Everything else
+// (profiles, teams, tournaments, ...) is real user-generated data created
+// through Supabase Auth sign-up / the API, so it is intentionally not seeded.
 func SeedDatabase(db *gorm.DB) error {
-	log.Println("Starting database seed...")
-
-	// Seed Genders
-	if err := seedGenders(db); err != nil {
-		return err
-	}
-
-	// Seed Users
-	if err := seedUsers(db); err != nil {
-		return err
-	}
-
-	log.Println("Database seed completed successfully")
-	return nil
-}
-
-// seedGenders creates initial gender records.
-func seedGenders(db *gorm.DB) error {
-	genders := []models.Gender{
-		{Model: gorm.Model{ID: 1}, Gender: "ชาย"},       // Male
-		{Model: gorm.Model{ID: 2}, Gender: "หญิง"},      // Female
-		{Model: gorm.Model{ID: 3}, Gender: "อื่น ๆ"},    // Other
-	}
-
-	for _, gender := range genders {
-		// Check if gender already exists
-		var existing models.Gender
-		if err := db.Where("id = ?", gender.ID).First(&existing).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				if err := db.Create(&gender).Error; err != nil {
-					log.Printf("failed to seed gender: %v", err)
-					return err
-				}
-				log.Printf("created gender: %s", gender.Gender)
-			} else {
-				return err
-			}
+	for _, name := range defaultRoles {
+		var existing models.Role
+		err := db.Where("role_name = ?", name).First(&existing).Error
+		if err == nil {
+			continue
 		}
-	}
-
-	return nil
-}
-
-// seedUsers creates initial user records.
-func seedUsers(db *gorm.DB) error {
-	genderMaleID := uint(1)
-	genderFemaleID := uint(2)
-
-	birthDate1 := time.Date(1990, 5, 15, 0, 0, 0, 0, time.UTC)
-	birthDate2 := time.Date(1995, 8, 20, 0, 0, 0, 0, time.UTC)
-
-	hashedPassword1, err := utils.HashPassword("password123")
-	if err != nil {
-		return err
-	}
-
-	hashedPassword2, err := utils.HashPassword("securepass456")
-	if err != nil {
-		return err
-	}
-
-	users := []models.User{
-		{
-			FirstName: "สมชาย",
-			LastName:  "สมจริง",
-			Email:     "somchai@example.com",
-			Password:  hashedPassword1,
-			Age:       34,
-			BirthDay:  &birthDate1,
-			GenderID:  &genderMaleID,
-		},
-		{
-			FirstName: "สมหญิง",
-			LastName:  "สวยงาม",
-			Email:     "somying@example.com",
-			Password:  hashedPassword2,
-			Age:       29,
-			BirthDay:  &birthDate2,
-			GenderID:  &genderFemaleID,
-		},
-	}
-
-	for _, user := range users {
-		// Check if user already exists by email
-		var existing models.User
-		if err := db.Where("email = ?", user.Email).First(&existing).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				if err := db.Create(&user).Error; err != nil {
-					log.Printf("failed to seed user: %v", err)
-					return err
-				}
-				log.Printf("created user: %s %s (%s)", user.FirstName, user.LastName, user.Email)
-			} else {
-				return err
-			}
+		if err != gorm.ErrRecordNotFound {
+			return err
 		}
+		if err := db.Create(&models.Role{RoleName: name}).Error; err != nil {
+			log.Printf("failed to seed role %s: %v", name, err)
+			return err
+		}
+		log.Printf("created role: %s", name)
 	}
-
 	return nil
 }

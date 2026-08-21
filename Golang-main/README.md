@@ -1,147 +1,97 @@
-# Golang Example Backend
+# Esport Tournament Management — Go Backend
 
-A beginner-friendly REST API backend built with Go, Gin, GORM, PostgreSQL, JWT authentication, bcrypt password hashing, and a simplified controller-based architecture.
-
-## Features
-
-- User registration
-- User login
-- JWT authentication and protected routes
-- Get current user profile
-- Update user profile
-- Delete user profile
-- Get all users
-- PostgreSQL database with GORM migrations
-- Environment variables from `.env`
-
-## Project Structure
-
-- `cmd/` — application entry point
-- `internal/config/` — configuration and database connection
-- `internal/models/` — database models
-- `internal/dto/` — request/response payloads
-- `internal/controllers/` — HTTP controllers containing application logic
-- `internal/middleware/` — JWT auth middleware
-- `internal/routes/` — route definition and registration
-- `internal/utils/` — JWT, password, and response helpers
+REST API backend for the Team13 Esport Tournament Management System, built
+with Go, Gin, GORM, and a Supabase-managed PostgreSQL database. Covers all
+12 modules of the system (Auth/RBAC, Tournament Management, Team & Member
+Management, Registration & Screening, Scheduling, Coordination, Match
+Results, Prize Management, PR & Announcement, Reporting, Ticketing).
 
 ## Architecture
 
-This version uses a simple flow:
+- **Auth**: Supabase Auth (email/password, OAuth) — handled entirely on the
+  frontend via the Supabase JS client. This backend never sees a password;
+  it only verifies the Supabase-issued JWT on every request
+  (`internal/middleware/supabase_auth_middleware.go`) and trusts the
+  token's `sub` claim as the `Profile.ID`.
+- **Database**: Supabase's managed PostgreSQL, reached via a normal GORM +
+  `gorm.io/driver/postgres` connection using the project's connection
+  string. `Profile` is the `public` schema counterpart of Supabase's
+  `auth.users` — same UUID, holds only app-specific fields (role, display
+  name, status, ...).
+- **RBAC**: `internal/middleware/rbac_middleware.go`'s `RequireRole(db, "Admin", ...)`
+  gates sensitive routes by the caller's `Profile.Role.RoleName`.
+- **Layers**: Route -> Middleware -> Controller -> GORM, same
+  Route/Controller flow as before. Straightforward resources (Role,
+  Permission, Referee, WhitelistTeam, Schedule, CheatingReport, Account,
+  PrizePlace, Banner) are served by a generic `CRUD[T]` controller
+  (`internal/controllers/generic_controller.go`) instead of writing nearly
+  identical List/Get/Create/Update/Delete handlers 20+ times; modules with
+  real workflow logic (Team, Application review, MatchResult submission +
+  bracket progression, Payout, Ticket, ...) get their own controller.
+- **File uploads**: Portfolio / Application.DocumentURL /
+  MatchResult.ProofImageURL / PaymentEvidence all go through one shared
+  local-disk endpoint (`POST /api/v1/uploads`), served back at `/uploads/...`.
 
-Route -> Controller -> Database
+## Project Structure
 
-Controllers encapsulate request validation, business rules, and database queries in one place for easier study and faster learning.
+- `cmd/server/` — application entry point
+- `internal/config/` — env config, Supabase Postgres connection + AutoMigrate, RBAC role seeding
+- `internal/models/` — GORM models, one file per module (see table below)
+- `internal/middleware/` — Supabase JWT verification, RBAC role guard, CORS
+- `internal/controllers/` — HTTP handlers (generic CRUD + per-module business logic)
+- `internal/routes/` — route registration, grouped by module
+- `internal/utils/` — Supabase JWT verification, response helpers
+
+## Models by module
+
+| Module | File | Models |
+|---|---|---|
+| 1+2. Auth / RBAC | `profile.go` | `Profile`, `Role`, `Permission`, `Session`, `AuditLog` |
+| 3. Tournament Management | `tournament.go` | `Tournament`, `TournamentDetail`, `TournamentHistory` |
+| 4. Team & Member Management | `team.go` | `Team`, `TeamMember`, `Portfolio`, `Notification` (+ subclasses) |
+| 5. Registration & Screening | `registration.go` | `Application`, `Referee`, `WhitelistTeam`, `ReviewLog` |
+| 6+7. Scheduling / Coordination | `scheduling.go` | `Match`, `Schedule` |
+| 8. Match Results | `match_result.go` | `MatchResult`, `MatchParticipant`, `CheatingReport`, `CheatingReportTeam` |
+| 9. Prize Management | `prize.go` | `Account`, `PrizePlace`, `Payout`, `PayoutLog`, `PaymentEvidence` |
+| 10. PR & Announcement | `announcement.go` | `Banner`, `News` |
+| 11. Reporting | `reporting.go` | `FinancialSummary`, `ExpenseItem`, `IncomeItem`, `Document`, `AccessRequest`, `AccessLog` |
+| 12. Ticketing / Complaint | `ticket.go` | `Ticket` |
 
 ## Setup
 
-1. Install prerequisites:
-   - Go 1.22 or newer
-   - Docker and Docker Compose
-
-2. Open the project folder.
-
-3. Start PostgreSQL and pgAdmin with Docker Compose:
-
-```bash
-docker compose up -d
-```
-
-4. Create a `.env` file in the project root with the following values:
-
-```env
-DB_HOST=localhost
-DB_PORT=5432
-DB_USER=postgres
-DB_PASSWORD=postgres
-DB_NAME=golangdb
-JWT_SECRET=replace_with_a_strong_secret
-JWT_EXPIRES_IN=24h
-SERVER_PORT=8080
-```
-
-5. Download dependencies:
+1. Create a Supabase project (or use an existing one).
+2. Copy `.env` and fill in:
+   - `DATABASE_URL` — Project Settings -> Database -> Connection string
+   - `SUPABASE_JWT_SECRET` — Project Settings -> API -> JWT Secret
+3. Download dependencies:
 
 ```bash
 go mod tidy
 ```
 
-6. Run the server:
+4. Run the server (this also runs `AutoMigrate` for every model and seeds the default RBAC roles):
 
 ```bash
 go run ./cmd/server
 ```
 
-7. Open the API on `http://localhost:8080` or your configured `SERVER_PORT`.
+5. API is served at `http://localhost:8080/api/v1`, protected by
+   `Authorization: Bearer <supabase access token>` (the token the Supabase
+   JS client hands you on the frontend after sign-in).
 
-## API Endpoints
+## Endpoint groups
 
-- `POST /api/v1/auth/register`
-- `POST /api/v1/auth/login`
-- `GET /api/v1/users/profile`
-- `PUT /api/v1/users/profile`
-- `DELETE /api/v1/users/profile`
-- `GET /api/v1/users`
-- `GET /api/v1/users/{id}`
+| Prefix | Module |
+|---|---|
+| `/me`, `/profiles`, `/roles`, `/permissions` | 1+2. Auth / RBAC |
+| `/tournaments` | 3. Tournament Management |
+| `/teams`, `/schedules`, `/notifications` | 4. Team & Member Mgmt (+7. Coordination) |
+| `/applications`, `/referees`, `/whitelist-teams` | 5. Registration & Screening |
+| `/matches`, `/match-results`, `/cheating-reports` | 6. Scheduling / 8. Match Results |
+| `/accounts`, `/prize-places`, `/payouts` | 9. Prize Management |
+| `/banners`, `/news` | 10. PR & Announcement |
+| `/reporting/dashboard` | 11. Reporting |
+| `/tickets` | 12. Ticketing / Complaint |
+| `/uploads` | shared file upload (Portfolio, DocumentURL, ProofImageURL, PaymentEvidence) |
 
-## Example cURL
-
-### Register
-
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Alice","email":"alice@example.com","password":"Secret123"}'
-```
-
-### Login
-
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"alice@example.com","password":"Secret123"}'
-```
-
-### Get profile
-
-```bash
-curl http://localhost:8080/api/v1/users/profile \
-  -H "Authorization: Bearer <JWT_TOKEN>"
-```
-
-### Update profile
-
-```bash
-curl -X PUT http://localhost:8080/api/v1/users/profile \
-  -H "Authorization: Bearer <JWT_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Alice Updated","password":"NewSecret123"}'
-```
-
-### Delete profile
-
-```bash
-curl -X DELETE http://localhost:8080/api/v1/users/profile \
-  -H "Authorization: Bearer <JWT_TOKEN>"
-```
-
-### Get all users
-
-```bash
-curl http://localhost:8080/api/v1/users \
-  -H "Authorization: Bearer <JWT_TOKEN>"
-```
-
-### Get user by ID
-
-```bash
-curl http://localhost:8080/api/v1/users/1 \
-  -H "Authorization: Bearer <JWT_TOKEN>"
-```
-
-## Notes
-
-- The application now uses controllers only, without separate `handlers`, `services`, or `repositories` layers.
-- Passwords are hashed with bcrypt.
-- JWT tokens are signed with a secret loaded from environment variables.
-- Routes are defined in `internal/routes/` and dispatched to controller methods.
+See `internal/routes/routes.go` for the exact method/path/role-guard for every endpoint.
