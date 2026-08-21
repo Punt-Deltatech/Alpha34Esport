@@ -14,21 +14,25 @@ import CloseIcon from '@mui/icons-material/Close';
 import BadgeIcon from '@mui/icons-material/Badge';
 import MailIcon from '@mui/icons-material/Mail';
 import type { Member } from '../../Types/Team_types';
-import { sendTeamInvitation } from '../../Types/Notification_types';
+import { inviteMember } from '../../../services/teamService';
+import { extractApiErrorMessage } from '../../../lib/apiClient';
 
 interface AddMemberFormProps {
-  teamName: string; // Used to name the invitation (and as a temporary inviterTeamID, since Team doesn't have a real teamID yet)
+  teamId: string;
+  teamName: string; // used only for display in the confirmation screen
   existingMembers: Member[];
   onClose: () => void;
 }
 
-export default function AddMemberForm({ teamName, existingMembers, onClose }: AddMemberFormProps) {
-  // There's no real search/login system yet, so the captain enters the UserID of the player to invite manually
+export default function AddMemberForm({ teamId, teamName, existingMembers, onClose }: AddMemberFormProps) {
+  // There's no user-search UI yet, so the captain enters the invitee's Profile ID (Supabase auth uid) manually —
+  // the same "User ID" they'd find on their own profile page.
   const [userID, setUserID] = useState('');
   const [error, setError] = useState('');
+  const [sending, setSending] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null); // Has a value = invitation sent successfully; show the confirmation screen instead of the form
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedID = userID.trim();
 
@@ -41,10 +45,17 @@ export default function AddMemberForm({ teamName, existingMembers, onClose }: Ad
       return;
     }
 
-    // Invite to the team instead of adding immediately — sent as an InvitationNotification to the notification bell
-    // The invitee must click "Accept" before they're actually considered part of the team
-    sendTeamInvitation(teamName, trimmedID);
-    setSentTo(trimmedID);
+    // Invite to the team instead of adding immediately — sent as an InvitationNotification to the notification bell.
+    // The invitee must click "Accept" before they're actually considered part of the team.
+    setSending(true);
+    try {
+      await inviteMember(teamId, trimmedID);
+      setSentTo(trimmedID);
+    } catch (err) {
+      setError(extractApiErrorMessage(err));
+    } finally {
+      setSending(false);
+    }
   };
 
   if (sentTo) {
@@ -58,7 +69,8 @@ export default function AddMemberForm({ teamName, existingMembers, onClose }: Ad
             Invitation Sent
           </Typography>
           <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-            The team invitation has been sent to the notification bell of User ID "{sentTo}". Waiting for the player to accept.
+            An invitation to join "{teamName}" has been sent to the notification bell of User ID "{sentTo}". Waiting
+            for the player to accept.
           </Typography>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2, justifyContent: 'center' }}>
@@ -114,8 +126,8 @@ export default function AddMemberForm({ teamName, existingMembers, onClose }: Ad
           <Button onClick={onClose} sx={{ textTransform: 'none' }}>
             Cancel
           </Button>
-          <Button type="submit" variant="contained" sx={{ textTransform: 'none', borderRadius: 2 }}>
-            Send Invitation
+          <Button type="submit" variant="contained" disabled={sending} sx={{ textTransform: 'none', borderRadius: 2 }}>
+            {sending ? 'Sending…' : 'Send Invitation'}
           </Button>
         </DialogActions>
       </Box>

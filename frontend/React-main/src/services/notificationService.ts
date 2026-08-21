@@ -12,6 +12,10 @@ export async function markNotificationRead(id: string): Promise<void> {
   await apiClient.put(`/notifications/${id}/read`);
 }
 
+export async function deleteNotification(id: string): Promise<void> {
+  await apiClient.delete(`/notifications/${id}`);
+}
+
 export async function respondToInvitation(notificationId: string, accept: boolean) {
   const res = await apiClient.post(`/notifications/${notificationId}/respond`, { accept });
   return res.data.data;

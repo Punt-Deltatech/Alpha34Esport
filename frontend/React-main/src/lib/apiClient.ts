@@ -9,6 +9,16 @@ const baseURL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'ht
 // it just attaches whatever access token Supabase currently holds.
 export const apiClient = axios.create({ baseURL });
 
+// Uploaded files (Portfolio.file_path, etc.) come back as paths like
+// "/uploads/169999_resume.pdf" — relative to the Go server's origin, NOT
+// the Vite dev server's. Resolve against the API origin before using them
+// in an <img>/<a href> so they don't 404 against the frontend's own origin.
+const apiOrigin = new URL(baseURL).origin;
+export function resolveFileUrl(path: string): string {
+  if (!path) return path;
+  return /^https?:\/\//.test(path) ? path : `${apiOrigin}${path}`;
+}
+
 apiClient.interceptors.request.use(async (config) => {
   const {
     data: { session },

@@ -1,3 +1,10 @@
+// UI-facing notification shapes used by NotificationBell.tsx / NotificationDetailDialog.tsx.
+// Backed by the real Go backend now (see ../../services/notificationService.ts) — mapNotification
+// below translates the backend's merged shape (types/api.ts) into this file's existing
+// discriminated-union shape, so the presentational components didn't have to change.
+
+import type { AppNotification as ApiNotification } from '../../types/api';
+
 // Matches the Notification struct on the Go side — one owner (TeamMember) can have many notifications (1..*)
 export interface Notification {
   notificationID: string;
@@ -10,7 +17,6 @@ export interface Notification {
 export interface InvitationNotification extends Notification {
   kind: 'invitation';
   inviterTeamID: string;
-  inviteeUserID: string; // used when clicking "Accept" to know which id to add to the team (see joinTeamAsMember in Team_types.ts)
   actionStatus: 'pending' | 'accepted' | 'declined';
 }
 
@@ -24,35 +30,26 @@ export interface GeneralNotification extends Notification {
 
 export type AppNotification = InvitationNotification | GeneralNotification;
 
-// ---------- Send team invitation ----------
-// Must match STORAGE_KEY in NotificationBell.tsx so invitations actually show up in the bell
-// (same pattern as notifyApplicationDecision in Referee_types.ts)
-const NOTIFICATIONS_STORAGE_KEY = 'esports_notifications';
-
-// Invite a player to the team by User ID — instead of adding them to the team immediately (the old behavior),
-// the system sends an InvitationNotification to the notification bell instead. The invitee must click "Accept"
-// in the bell before they're considered part of the team.
-// There's no real multi-user system yet, so this writes directly to the same localStorage that NotificationBell
-// reads from (same as the demo). Team also doesn't have a real teamID in this scope yet, so the team name
-// (team.name) is used in place of inviterTeamID for now.
-export function sendTeamInvitation(inviterTeamName: string, inviteeUserID: string): void {
-  try {
-    const raw = localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
-    const existing: AppNotification[] = raw ? JSON.parse(raw) : [];
-    const invitation: InvitationNotification = {
+export function mapNotification(n: ApiNotification): AppNotification {
+  if (n.type === 'invitation') {
+    return {
       kind: 'invitation',
-      notificationID: `invite-${inviteeUserID}-${Date.now()}`,
-      title: `Invitation to join team "${inviterTeamName}"`,
-      isRead: false,
-      createdDate: new Date().toISOString(),
-      inviterTeamID: inviterTeamName,
-      inviteeUserID,
-      actionStatus: 'pending',
+      notificationID: n.id,
+      title: n.title,
+      isRead: n.is_read,
+      createdDate: n.created_date,
+      inviterTeamID: n.inviter_team_id ?? '',
+      actionStatus: n.action_status === 'rejected' ? 'declined' : (n.action_status ?? 'pending'),
     };
-    localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify([invitation, ...existing]));
-    // Same as notifyApplicationDecision in Referee_types.ts — lets the bell refresh live within the same tab too
-    window.dispatchEvent(new Event('esports-notifications-changed'));
-  } catch {
-    // Silently ignore for now — there's no UI yet to report an error when localStorage is full/disabled (same as notifyApplicationDecision)
   }
+  return {
+    kind: 'general',
+    notificationID: n.id,
+    title: n.title,
+    isRead: n.is_read,
+    createdDate: n.created_date,
+    message: n.message ?? '',
+    category: n.category ?? '',
+    referenceID: n.reference_id ?? '',
+  };
 }

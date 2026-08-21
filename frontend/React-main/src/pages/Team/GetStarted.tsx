@@ -1,96 +1,132 @@
-import { useState, useEffect } from 'react';
-import CreateTeamForm from './Form/CreateTeamForm';
+import { useCallback, useEffect, useState } from 'react';
+import { Box, CircularProgress, Alert } from '@mui/material';
+import CreateTeamForm, { type CreateTeamFormValues } from './Form/CreateTeamForm';
 import Myteam from './MyTeam';
 import type { PersonalForm } from './Form/PersonalForm';
 import type { Team } from '../Types/Team_types';
+import { mapApiTeamToTeam } from '../Types/Team_types';
+import { useAuth } from '../../hooks/useAuth';
+import * as teamService from '../../services/teamService';
+import { uploadDataUrl } from '../../services/uploadService';
+import { extractApiErrorMessage } from '../../lib/apiClient';
 
-// ยังไม่มีระบบ login จริง จึงกำหนด currentUserId ให้ตรงกับ id ของผู้สร้างทีม (CreateTeamForm ตั้งให้เป็น '1' เสมอ)
-const CURRENT_USER_ID = '1';
-
-export default function MyTeam() {
-  const [team, setTeam] = useState<any>(null);
-  const [loaded, setLoaded] = useState(false);
+// Container for Module 4: Team & Member Management. Owns all data-fetching/mutation against
+// the Go backend and adapts it into the plain Team/Member shape MyTeam.tsx and its forms
+// already expect (see Team_types.ts) — none of the presentational components below had to change.
+export default function GetStarted() {
+  const { user, loading: authLoading } = useAuth();
+  const [team, setTeam] = useState<Team | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
 
+  const reload = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    setError('');
+    try {
+      const apiTeam = await teamService.getMyTeam(user.id);
+      setTeam(apiTeam ? mapApiTeamToTeam(apiTeam) : null);
+    } catch (err) {
+      setError(extractApiErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
   useEffect(() => {
-    const loadFromStorage = () => {
-      const saved = localStorage.getItem('esports_team');
-      if (saved) setTeam(JSON.parse(saved));
-    };
+    if (!authLoading) void reload();
+  }, [authLoading, reload]);
 
-    loadFromStorage();
-    setLoaded(true);
+  if (authLoading || loading) {
+    return (
+      <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
 
-    // ถ้าหน้านี้เปิดค้างอยู่พอดีตอนกด "ยอมรับ" คำเชิญที่กระดิ่ง (NotificationBell เขียนสมาชิกใหม่
-    // ผ่าน joinTeamAsMember ใน Team_types.ts) ให้ดึง team ล่าสุดมาโชว์ทันทีโดยไม่ต้อง reload หน้า
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'esports_team') loadFromStorage();
-    };
-    const handleCustom = () => loadFromStorage();
-
-    window.addEventListener('storage', handleStorage);
-    window.addEventListener('esports-team-changed', handleCustom);
-    return () => {
-      window.removeEventListener('storage', handleStorage);
-      window.removeEventListener('esports-team-changed', handleCustom);
-    };
-  }, []);
-
-  if (!loaded) return null;
-
-  const handleUpdateMember = (memberId: string, data: PersonalForm) => {
-    setTeam((prev: any) => {
-      if (!prev) return prev;
-      const updatedMembers = prev.members.map((m: any) =>
-        m.userid === memberId
-          ? {
-              ...m,
-              name: data.fullname,
-              role: data.role,
-              gameUID: data.gameUID,
-              phone: data.phone,
-              socialContact: data.socialContact,
-              avatar: data.avatar,
-              portfolio: data.portfolio ?? undefined,
-            }
-          : m
-      );
-      const updated = { ...prev, members: updatedMembers };
-      localStorage.setItem('esports_team', JSON.stringify(updated));
-      return updated;
+  const handleCreate = async (values: CreateTeamFormValues) => {
+    await teamService.createTeam({
+      team_name: values.name,
+      game: values.game,
+      description: values.description,
+      max_member: values.maxMembers,
+      social_url: values.social,
+      logo_url: values.logo,
+      captain_fullname: values.ownerName,
     });
+    setShowForm(false);
+    await reload();
   };
 
-  const handleUpdateTeam = (
-    updates: Pick<Team, 'name' | 'game' | 'description' | 'maxMembers' | 'social' | 'logo'>
+  const handleUpdateMember = async (memberId: string, data: PersonalForm) => {
+    if (!team) return;
+    const member = team.members.find((m) => m.userid === memberId);
+    if (!member) return;
+
+    await teamService.updateTeamMember(team.id, member.rosterId, {
+      fullname: data.fullname,
+      role: data.role === 'Substitute' ? 'substitute' : 'starter',
+      game_uid: data.gameUID,
+      phone: data.phone,
+      social_contact: data.socialContact,
+      avatar: data.avatar,
+    });
+
+    // Only re-upload if a *new* file was picked (base64 data URL) — an unchanged
+    // portfolio's fileData is already the resolved http(s) URL from the last load.
+    if (data.portfolio?.fileData?.startsWith('data:')) {
+      const uploaded = await uploadDataUrl(data.portfolio.fileData, data.portfolio.fileName);
+      await teamService.setMemberPortfolio(team.id, member.rosterId, uploaded);
+    }
+
+    await reload();
+  };
+
+  const handleUpdateTeam = async (
+    updates: Pick<Team, 'name' | 'game' | 'description' | 'maxMembers' | 'social' | 'logo'>,
   ) => {
-    setTeam((prev: any) => {
-      if (!prev) return prev;
-      const updated = { ...prev, ...updates };
-      localStorage.setItem('esports_team', JSON.stringify(updated));
-      return updated;
+    if (!team) return;
+    await teamService.updateTeam(team.id, {
+      team_name: updates.name,
+      game: updates.game,
+      description: updates.description,
+      max_member: updates.maxMembers,
+      social_url: updates.social,
+      logo_url: updates.logo,
     });
+    await reload();
   };
 
-  // ลบสมาชิกออกจากทีม (กัปตันเท่านั้นที่เรียกได้ — เช็คสิทธิ์แล้วใน MyTeam.tsx)
-  const handleRemoveMember = (memberId: string) => {
-    setTeam((prev: any) => {
-      if (!prev) return prev;
-      const updated = { ...prev, members: prev.members.filter((m: any) => m.userid !== memberId) };
-      localStorage.setItem('esports_team', JSON.stringify(updated));
-      return updated;
-    });
+  const handleRemoveMember = async (memberId: string) => {
+    if (!team) return;
+    const member = team.members.find((m) => m.userid === memberId);
+    if (!member) return;
+    await teamService.removeTeamMember(team.id, member.rosterId);
+    await reload();
   };
+
+  const handleDisband = async () => {
+    if (!team) return;
+    await teamService.deleteTeam(team.id);
+    setTeam(null);
+  };
+
+  if (error) {
+    return (
+      <Box sx={{ p: 4 }}>
+        <Alert severity="error">{error}</Alert>
+      </Box>
+    );
+  }
 
   if (team) {
     return (
       <Myteam
         team={team}
-        currentUserId={CURRENT_USER_ID}
-        onDisband={() => {
-          localStorage.removeItem('esports_team');
-          setTeam(null);
-        }}
+        currentUserId={user!.id}
+        onDisband={handleDisband}
         onUpdateMember={handleUpdateMember}
         onUpdateTeam={handleUpdateTeam}
         onRemoveMember={handleRemoveMember}
@@ -102,13 +138,7 @@ export default function MyTeam() {
   if (showForm) {
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
-        <CreateTeamForm
-          onClose={() => setShowForm(false)}
-          onCreate={(newTeam) => {
-            setTeam(newTeam);
-            setShowForm(false);
-          }}
-        />
+        <CreateTeamForm onClose={() => setShowForm(false)} onCreate={handleCreate} />
       </div>
     );
   }

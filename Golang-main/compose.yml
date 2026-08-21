@@ -1,3 +1,10 @@
+# Superseded by the local Supabase stack at ../supabase (run `npx supabase start` from the
+# repo root). That stack already provides Postgres (localhost:54322) and a web admin UI
+# (Supabase Studio, localhost:54323) — the standalone Postgres + pgAdmin this file used to
+# define would just be a second, disconnected database the Go backend doesn't point to.
+#
+# Kept only as a reference for anyone who wants a plain non-Supabase Postgres for some other
+# purpose — `docker compose up -d` is no longer a required setup step for this project.
 services:
   postgres:
     image: postgres:17

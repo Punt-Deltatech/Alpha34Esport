@@ -316,6 +316,7 @@ export default function MyTeam({
 
       {isAddingMember && (
         <AddMemberForm
+          teamId={team.id}
           teamName={team.name}
           existingMembers={team.members}
           onClose={() => setIsAddingMember(false)}

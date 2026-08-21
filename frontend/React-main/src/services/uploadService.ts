@@ -21,3 +21,11 @@ export async function uploadFile(file: File): Promise<UploadedFile> {
   });
   return res.data.data;
 }
+
+// Existing forms (PersonalForm, CreateTeamForm, ...) read files client-side into base64
+// data URLs via FileReader before this service layer existed. Converts one back into a
+// File so it can still go through the same multipart upload endpoint as everything else.
+export async function uploadDataUrl(dataUrl: string, fileName: string): Promise<UploadedFile> {
+  const blob = await (await fetch(dataUrl)).blob();
+  return uploadFile(new File([blob], fileName, { type: blob.type }));
+}

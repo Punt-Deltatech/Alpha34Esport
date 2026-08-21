@@ -1,13 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Box, Typography } from '@mui/material';
+import { Box, Typography, CircularProgress } from '@mui/material';
 import GroupsIcon from '@mui/icons-material/Groups';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ScrollBox from '../../../components/ScrollBox';
-import {
-  getWhitelistedTeamsForTournament,
-  WHITELIST_STORAGE_KEY,
-  type WhitelistTeam as WhitelistTeamEntry,
-} from '../../Types/WhiteList_types';
+import { mapWhitelistTeam, type WhitelistTeam as WhitelistTeamEntry } from '../../Types/WhiteList_types';
+import { listWhitelistForTournament } from '../../../services/applicationService';
 
 interface WhitelistTeamProps {
   tournamentID: string;
@@ -18,25 +15,26 @@ function formatApprovedDate(iso: string): string {
 }
 
 // การ์ด "ทีมที่ผ่านการอนุมัติแล้ว" — วางไว้ใน TournamentDetail (View Detail) ข้าง ๆ About/Organizer
-// อ่านจาก localStorage ตรง ๆ ด้วยตัวเอง (ไม่รับผ่าน props จาก TournamentHub) เพื่อให้รีเฟรชสดได้เองทันที
-// หลัง referee approve/reject โดยไม่ต้องพึ่งให้ TournamentHub re-fetch แล้วส่ง prop ใหม่ลงมา
+// โหลดจาก backend จริงทุกครั้งที่เปิด (tournamentID เปลี่ยน) แทนการอ่าน localStorage
 export default function WhitelistTeam({ tournamentID }: WhitelistTeamProps) {
   const [teams, setTeams] = useState<WhitelistTeamEntry[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const load = () => setTeams(getWhitelistedTeamsForTournament(tournamentID));
-    load();
-
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === WHITELIST_STORAGE_KEY) load();
-    };
-    const handleCustom = () => load();
-
-    window.addEventListener('storage', handleStorage);
-    window.addEventListener('esports-whitelist-changed', handleCustom);
+    let cancelled = false;
+    setLoading(true);
+    listWhitelistForTournament(tournamentID)
+      .then((list) => {
+        if (!cancelled) setTeams(list.map(mapWhitelistTeam));
+      })
+      .catch(() => {
+        if (!cancelled) setTeams([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => {
-      window.removeEventListener('storage', handleStorage);
-      window.removeEventListener('esports-whitelist-changed', handleCustom);
+      cancelled = true;
     };
   }, [tournamentID]);
 
@@ -57,7 +55,11 @@ export default function WhitelistTeam({ tournamentID }: WhitelistTeamProps) {
         </Typography>
       </Box>
 
-      {teams.length === 0 ? (
+      {loading ? (
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+          <CircularProgress size={20} />
+        </Box>
+      ) : teams.length === 0 ? (
         <Typography variant="body2" sx={{ color: 'text.secondary' }}>
           No approved teams yet
         </Typography>

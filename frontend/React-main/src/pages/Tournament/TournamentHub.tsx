@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
     Box,
     Card,
@@ -13,6 +13,8 @@ import {
     Dialog,
     DialogTitle,
     DialogContent,
+    CircularProgress,
+    Alert,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -24,16 +26,20 @@ import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import GroupsIcon from '@mui/icons-material/Groups';
 import SearchIcon from '@mui/icons-material/Search';
 import type { ApplicationStatus, Tournament, TournamentUIState } from '../Types/Tournament_types';
+import { mapTournament } from '../Types/Tournament_types';
 import type { Team } from '../Types/Team_types';
+import { mapApiTeamToTeam } from '../Types/Team_types';
 import SignupConfirmModal from './Signup_confrimModel';
 // ตั้งชื่อ alias ตอน import เพราะ component นี้ชื่อ TournamentDetail เหมือนกับ type TournamentDetail ใน Tournament_types.ts
 // statusMeta ถูก export มาจากไฟล์เดียวกัน ใช้ mapping สี/label เดียวกับที่ TournamentDetail (modal) ใช้ ไม่ต้องเขียนซ้ำ
 import TournamentDetailModal, { statusMeta } from './Tournament_detail';
 import WhitelistTeam from './WhiteList/WhiteListTeam';
 import ConfirmDialog from '../../components/ConfirmDialog';
-// path นี้อิงตามสมมติฐานว่า RefereeReview.tsx อยู่ที่ src/pages/Referee/ — ถ้าโครงสร้างโปรเจกต์จริงต่างจากนี้ ให้ปรับ path ตรงนี้
-import type { Application, ApplicantMember } from '../Types/App_Referee_types';
-import { loadApplicationsFromStorage, saveApplicationsToStorage } from '../Types/App_Referee_types';
+import { useAuth } from '../../hooks/useAuth';
+import * as tournamentService from '../../services/tournamentService';
+import * as teamService from '../../services/teamService';
+import * as applicationService from '../../services/applicationService';
+import { extractApiErrorMessage } from '../../lib/apiClient';
 
 type TournamentRow = Tournament & TournamentUIState;
 
@@ -61,93 +67,6 @@ function getShortDescription(description: string, maxLength = 140): string {
 
     return summary;
 }
-// ยังไม่มี backend เชื่อมจริง จึงใช้ mock data ตามโครง struct ใหม่ไปก่อน (Tournament + TournamentDetail แบบ composition)
-const MOCK_TOURNAMENTS: TournamentRow[] = [
-    {
-        tournamentID: 't1',
-        tournamentName: 'VCT Champions 2026',
-        game: 'Valorant',
-        startDate: '2026-03-15T00:00:00Z',
-        endDate: '2026-03-25T00:00:00Z',
-        bannerUrl: '',
-        status: 'open',
-        detail: {
-            tournamentID: 't1',
-            maxTeam: 64,
-            registerDeadline: '2026-03-10T00:00:00Z',
-            prizePool: 250000,
-            format: 'Double Elimination',
-            organizer: 'Riot Games',
-            description:
-                `The premier Valorant championship featuring top teams from across the globe. All skill levels welcome — qualifiers bracket available for newcomers.
-
-📍 Venue: Bangkok Arena, Thailand (LAN Final) / Online for qualifier rounds
-
-🏆 Prize Breakdown
-1st place: $150,000
-2nd place: $70,000
-3rd place: $30,000
-
-👥 Team Size
-Teams may have up to 8 members (including substitutes)
-At least 5 starters are required to compete
-
-📋 Rules
-1. All players must have a verified Game UID
-2. Any cheating software or third-party tools are strictly prohibited
-3. Teams arriving more than 15 minutes late will forfeit the match
-4. Referee decisions are final`,
-            requireAttachment: false,
-        },
-        registeredTeamCount: 32,
-        applicationStatus: 'none',
-    },
-    {
-        tournamentID: 't2',
-        tournamentName: 'ESL Pro League Season 29',
-        game: 'CS2',
-        startDate: '2026-04-02T00:00:00Z',
-        endDate: '2026-04-15T00:00:00Z',
-        bannerUrl: '',
-        status: 'open',
-        detail: {
-            tournamentID: 't2',
-            maxTeam: 32,
-            registerDeadline: '2026-03-28T00:00:00Z',
-            prizePool: 120000,
-            format: 'Swiss',
-            organizer: 'ESL Gaming',
-            description:
-                'ESL Pro League returns for its 29th season with teams competing across multiple regions for a spot in the global finals.',
-            requireAttachment: true,
-        },
-        registeredTeamCount: 20,
-        applicationStatus: 'none',
-    },
-    {
-        tournamentID: 't3',
-        tournamentName: 'ROV Season 99',
-        game: 'RoV',
-        startDate: '2026-04-20T00:00:00Z',
-        endDate: '2026-04-28T00:00:00Z',
-        bannerUrl: '',
-        status: 'open',
-        detail: {
-            tournamentID: 't3',
-            maxTeam: 16,
-            registerDeadline: '2026-04-15T00:00:00Z',
-            prizePool: 50000,
-            format: 'Single Elimination',
-            organizer: 'Garena Thailand',
-            description:
-                'The latest season of the RoV competitive circuit, open to all registered teams in the region.',
-            requireAttachment: false,
-        },
-        registeredTeamCount: 8,
-        applicationStatus: 'none',
-    },
-];
-
 function formatDate(iso: string): string {
     return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
@@ -157,95 +76,94 @@ function formatPrizePool(amount: number): string {
 }
 
 export default function TournamentHub() {
-    const [tournaments, setTournaments] = useState<TournamentRow[]>(MOCK_TOURNAMENTS);
+    const { user } = useAuth();
+    const [tournaments, setTournaments] = useState<TournamentRow[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
     // ให้ขยายได้ทีละรายการ เหมือนภาพตัวอย่าง
-    const [expandedID, setExpandedID] = useState<string | null>(MOCK_TOURNAMENTS[0]?.tournamentID ?? null);
+    const [expandedID, setExpandedID] = useState<string | null>(null);
     // เก็บ id ของทัวร์นาเมนต์ที่กำลังจะยืนยันสมัคร (เปิด SignupConfirmModal)
     const [signupTargetID, setSignupTargetID] = useState<string | null>(null);
     // เก็บ id ของทัวร์นาเมนต์ที่กำลังดู detail (เปิด TournamentDetailModal)
     const [detailTargetID, setDetailTargetID] = useState<string | null>(null);
     // เก็บ id ของทัวร์นาเมนต์ที่กำลังดู "ทีมที่ผ่านการอนุมัติ" แบบเร็ว ๆ (ไม่ต้องเปิด TournamentDetailModal เต็ม)
     const [whitelistTargetID, setWhitelistTargetID] = useState<string | null>(null);
-    // ทีมของ user คนนี้ — โหลดจาก localStorage เดียวกับที่ MyTeam/GetStarted ใช้จริง
+    // ทีมของ user คนนี้
     const [myTeam, setMyTeam] = useState<Team | null>(null);
     // คำค้นหาชื่อทัวร์นาเมนต์
     const [searchQuery, setSearchQuery] = useState('');
     // filter ตามเกม — 'All' คือไม่กรอง
     const [selectedGame, setSelectedGame] = useState<string>('All');
 
+    const reload = useCallback(async () => {
+        if (!user) return;
+        setLoading(true);
+        setError('');
+        try {
+            const [apiTournaments, apiTeam] = await Promise.all([
+                tournamentService.listTournaments(),
+                teamService.getMyTeam(user.id),
+            ]);
+            const team = apiTeam ? mapApiTeamToTeam(apiTeam) : null;
+            setMyTeam(team);
+
+            const myApplications = team ? await applicationService.listApplicationsForTeam(team.id) : [];
+            const statusByTournament = new Map<string, ApplicationStatus>();
+            for (const a of myApplications) {
+                statusByTournament.set(a.tournament_id, a.status.toLowerCase() as ApplicationStatus);
+            }
+
+            const rows = await Promise.all(
+                apiTournaments.map(async (t): Promise<TournamentRow> => {
+                    const whitelist = await applicationService.listWhitelistForTournament(t.id);
+                    return {
+                        ...mapTournament(t),
+                        registeredTeamCount: whitelist.length,
+                        applicationStatus: statusByTournament.get(t.id) ?? 'none',
+                    };
+                }),
+            );
+            setTournaments(rows);
+            setExpandedID((prev) => prev ?? rows[0]?.tournamentID ?? null);
+        } catch (err) {
+            setError(extractApiErrorMessage(err));
+        } finally {
+            setLoading(false);
+        }
+    }, [user]);
+
     useEffect(() => {
-        const saved = localStorage.getItem('esports_team');
-        if (saved) setMyTeam(JSON.parse(saved));
-    }, []);
+        void reload();
+    }, [reload]);
 
     const toggleExpand = (id: string) => {
         setExpandedID((prev) => (prev === id ? null : id));
     };
 
     // ยิงตอนกด "ยืนยันสมัคร" ใน SignupConfirmModal เท่านั้น ไม่ใช่ตอนกดปุ่ม Join ตรงๆ
-    // เขียนใบสมัครลง localStorage (APPLICATIONS_STORAGE_KEY) ให้หน้า RefereeReview อ่านไปแสดงได้
-    // (ย้ายมาจาก MyTeam.tsx — การสมัครทัวร์นาเมนต์ควรเกิดที่หน้า Tournament เท่านั้น ไม่ใช่ที่ My Team)
     // ส่งใบสมัครแล้ว → ขึ้น "Pending" ก่อนเสมอ ยังไม่นับเป็นทีมที่ลงทะเบียนจริง
-    // จนกว่า Referee/ผู้จัด จะ approve ใบสมัคร (Application.status: pending → approved) ถึงจะนับเข้า registeredTeamCount
-    const handleConfirmSignUp = (id: string) => {
-        const tournament = tournaments.find((t) => t.tournamentID === id);
-        if (!tournament || !myTeam) return; // เผื่อไว้ — ปกติ modal นี้เปิดได้ก็ต่อเมื่อมีทั้งสองอย่างแล้ว
+    // จนกว่า Referee/ผู้จัด จะ approve ใบสมัคร (Application.status: Pending → Approved) ถึงจะนับเข้า registeredTeamCount
+    const handleConfirmSignUp = async (id: string) => {
+        if (!myTeam) return; // เผื่อไว้ — ปกติ modal นี้เปิดได้ก็ต่อเมื่อมีทีมแล้ว
 
-        // snapshot roster ของทีม ณ ตอนสมัคร ตามที่ ApplicantMember ต้องการ (ไม่ผูกกับ Team ที่ live อยู่)
-        // Member.isOwner เป็น optional (boolean | undefined) แต่ ApplicantMember.isOwner บังคับ boolean เสมอ จึง default เป็น false
-        // Member.portfolio (Portfolio) มี fileData เป็น optional แต่ ApplicantMember.portfolio (PortfolioFile) บังคับ fileData ให้มีค่าเสมอ
-        // ถ้า fileData ยังไม่มีจริง (เช่นยังไม่ได้แนบไฟล์) ถือว่ายังไม่มี portfolio ให้ตัดออกไปเลย
-        const applicantMembers: ApplicantMember[] = myTeam.members.map((m) => ({
-            id: m.userid,
-            name: m.name,
-            avatar: m.avatar,
-            isOwner: m.isOwner ?? false,
-            gameUID: m.gameUID,
-            role: m.role,
-            portfolio:
-                m.portfolio && m.portfolio.fileData
-                    ? {
-                          fileName: m.portfolio.fileName ?? 'portfolio',
-                          fileSize: m.portfolio.fileSize ?? 0,
-                          fileData: m.portfolio.fileData,
-                      }
-                    : undefined,
-        }));
-
-        const newApplication: Application = {
-            appID: `APP-${tournament.tournamentID}-${Date.now()}`,
-            tournamentID: tournament.tournamentID,
-            tournamentName: tournament.tournamentName,
-            game: tournament.game,
-            requireAttachment: tournament.detail.requireAttachment,
-            team: { name: myTeam.name, members: applicantMembers },
-            submittedDate: new Date().toISOString(),
-            status: 'pending',
-            screenerNote: '',
-            reviewDate: null,
-        };
-
-        // ใช้ loadApplicationsFromStorage/saveApplicationsToStorage ตัวเดียวกับที่ RefereeReview.tsx ใช้อ่าน
-        // (แทนการยุ่งกับ localStorage.getItem/setItem ตรง ๆ เอง) เพื่อให้แน่ใจว่าข้อมูลที่เขียนไปจะอยู่ใน
-        // format เดียวกับที่หน้า Referee Review อ่าน — ถ้า schema การเก็บข้อมูลเปลี่ยนในอนาคต จะอัปเดตพร้อมกันที่เดียว
-        // fallback เป็น [] เพราะ MOCK_APPLICATIONS สำหรับ seed ครั้งแรกเป็นหน้าที่ของ RefereeReview.tsx ไม่ใช่ที่นี่
         try {
-            const existingApplications = loadApplicationsFromStorage([]);
-            saveApplicationsToStorage([newApplication, ...existingApplications]);
-        } catch {
-            // เงียบไว้ก่อน — ยังไม่มี UI แจ้ง error กรณี localStorage เต็ม/ปิดใช้งาน
+            await applicationService.submitApplication({
+                tournament_id: id,
+                team_id: myTeam.id,
+            });
+            setTournaments((prev) =>
+                prev.map((t) =>
+                    t.tournamentID === id
+                        ? { ...t, applicationStatus: 'pending' as ApplicationStatus }
+                        : t
+                )
+            );
+        } catch (err) {
+            window.alert(extractApiErrorMessage(err));
+        } finally {
+            setSignupTargetID(null);
+            setDetailTargetID(null); // เผื่อสมัครจากใน detail modal ให้ปิดด้วย
         }
-
-        // TODO: เชื่อม API สมัครทีมจริงเมื่อมี backend
-        setTournaments((prev) =>
-            prev.map((t) =>
-                t.tournamentID === id
-                    ? { ...t, applicationStatus: 'pending' as ApplicationStatus }
-                    : t
-            )
-        );
-        setSignupTargetID(null);
-        setDetailTargetID(null); // เผื่อสมัครจากใน detail modal ให้ปิดด้วย
     };
 
     const signupTarget = tournaments.find((t) => t.tournamentID === signupTargetID) ?? null;
@@ -259,6 +177,22 @@ export default function TournamentHub() {
         const matchesSearch = t.tournamentName.toLowerCase().includes(searchQuery.trim().toLowerCase());
         return matchesGame && matchesSearch;
     });
+
+    if (loading) {
+        return (
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%' }}>
+                <CircularProgress />
+            </Box>
+        );
+    }
+
+    if (error) {
+        return (
+            <Box sx={{ p: 4 }}>
+                <Alert severity="error">{error}</Alert>
+            </Box>
+        );
+    }
 
     return (
         <Box sx={{ p: 4, maxWidth: 900, mx: 'auto', width: '100%' }}>

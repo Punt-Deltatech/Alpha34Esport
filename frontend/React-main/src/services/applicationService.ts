@@ -1,5 +1,5 @@
 import { apiClient } from '../lib/apiClient';
-import type { ApiSuccess, Application, Referee, WhitelistTeam } from '../types/api';
+import type { ApiSuccess, Application, Referee, ReviewLog, WhitelistTeam } from '../types/api';
 
 // Module 5: Registration & Screening
 
@@ -24,6 +24,13 @@ export async function listApplicationsForTournament(tournamentId: string): Promi
   return res.data.data;
 }
 
+// A team's own applications across all tournaments (any authenticated user can call this for
+// their own team — unlike listApplicationsForTournament, which is screener/admin-only).
+export async function listApplicationsForTeam(teamId: string): Promise<Application[]> {
+  const res = await apiClient.get<ApiSuccess<Application[]>>(`/teams/${teamId}/applications`);
+  return res.data.data;
+}
+
 // Referee/Organizer/Admin only. Approving creates the WhitelistTeam slot on the backend.
 export async function reviewApplication(
   id: string,
@@ -44,5 +51,15 @@ export async function listReferees(): Promise<Referee[]> {
 
 export async function listWhitelistTeams(): Promise<WhitelistTeam[]> {
   const res = await apiClient.get<ApiSuccess<WhitelistTeam[]>>('/whitelist-teams');
+  return res.data.data;
+}
+
+export async function listWhitelistForTournament(tournamentId: string): Promise<WhitelistTeam[]> {
+  const res = await apiClient.get<ApiSuccess<WhitelistTeam[]>>(`/tournaments/${tournamentId}/whitelist-teams`);
+  return res.data.data;
+}
+
+export async function listReviewLogsForTournament(tournamentId: string): Promise<ReviewLog[]> {
+  const res = await apiClient.get<ApiSuccess<ReviewLog[]>>(`/tournaments/${tournamentId}/review-logs`);
   return res.data.data;
 }

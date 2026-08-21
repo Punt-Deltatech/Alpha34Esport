@@ -8,13 +8,25 @@ import {
   Button,
   Avatar,
   IconButton,
+  Alert,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import ImageIcon from '@mui/icons-material/Image';
+import { extractApiErrorMessage } from '../../../lib/apiClient';
+
+export interface CreateTeamFormValues {
+  name: string;
+  game: string;
+  ownerName: string;
+  description: string;
+  maxMembers: number;
+  social: string;
+  logo: string;
+}
 
 interface CreateTeamFormProps {
   onClose: () => void;
-  onCreate: (team: any) => void;
+  onCreate: (values: CreateTeamFormValues) => Promise<void>;
 }
 
 const GAMES = ['VALORANT', 'League of Legends', 'ROV', 'PUBG Mobile', 'Free Fire'];
@@ -27,6 +39,8 @@ export default function CreateTeamForm({ onClose, onCreate }: CreateTeamFormProp
   const [maxMembers, setMaxMembers] = useState(5);
   const [social, setSocial] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -40,29 +54,27 @@ export default function CreateTeamForm({ onClose, onCreate }: CreateTeamFormProp
     reader.readAsDataURL(file);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
 
-    const team = {
-      name: name.trim(),
-      game,
-      description: description.trim(),
-      maxMembers,
-      social: social.trim(),
-      logo: logoUrl.trim(),
-      members: [
-        {
-          id: '1',
-          name: ownerName.trim() || 'You',
-          role: 'starter',
-          isOwner: true,
-        },
-      ],
-    };
-
-    localStorage.setItem('esports_team', JSON.stringify(team));
-    onCreate(team);
+    setError('');
+    setSubmitting(true);
+    try {
+      await onCreate({
+        name: name.trim(),
+        game,
+        ownerName: ownerName.trim() || 'You',
+        description: description.trim(),
+        maxMembers,
+        social: social.trim(),
+        logo: logoUrl.trim(),
+      });
+    } catch (err) {
+      setError(extractApiErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -88,6 +100,12 @@ export default function CreateTeamForm({ onClose, onCreate }: CreateTeamFormProp
           <CloseIcon fontSize="small" />
         </IconButton>
       </Box>
+
+      {error && (
+        <Alert severity="error" sx={{ mb: 2.5 }}>
+          {error}
+        </Alert>
+      )}
 
       {/* Logo Upload */}
       <Box sx={{ mb: 2.5 }}>
@@ -208,9 +226,10 @@ export default function CreateTeamForm({ onClose, onCreate }: CreateTeamFormProp
         fullWidth
         variant="contained"
         color="primary"
+        disabled={submitting}
         sx={{ py: 1.2, textTransform: 'none', fontWeight: 600, borderRadius: 2 }}
       >
-        Save
+        {submitting ? 'Saving…' : 'Save'}
       </Button>
     </Card>
   );

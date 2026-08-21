@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
     Box,
     Card,
@@ -10,6 +10,8 @@ import {
     IconButton,
     Avatar,
     Divider,
+    CircularProgress,
+    Alert,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import PendingActionsIcon from '@mui/icons-material/PendingActions';
@@ -25,191 +27,13 @@ import SportsEsportsIcon from '@mui/icons-material/SportsEsports';
 import GavelIcon from '@mui/icons-material/Gavel';
 import HistoryIcon from '@mui/icons-material/History';
 import { useNavigate } from 'react-router-dom';
-import type { Application, ApplicantMember, ApplicationStatus, Referee, ReviewLog } from '../Types/App_Referee_types';
-import {
-    loadApplicationsFromStorage,
-    saveApplicationsToStorage,
-    notifyApplicationDecision,
-    addReviewLog,
-    loadReviewLogsFromStorage,
-} from '../Types/App_Referee_types';
-import { addToWhitelist, deactivateWhitelistEntry } from '../Types/WhiteList_types';
+import type { Application, ApplicantMember, ApplicationStatus, Referee } from '../Types/App_Referee_types';
+import { mapApplication } from '../Types/App_Referee_types';
 import ScrollBox from '../../components/ScrollBox';
 import ConfirmDialog from '../../components/ConfirmDialog';
-
-// กรรมการ demo — ในระบบจริงค่านี้ควรมาจาก auth/session ของผู้ใช้ที่ login อยู่ ไม่ใช่ hardcode แบบนี้
-const DEFAULT_REFEREE: Referee = {
-    refereeID: 'REF-001',
-    fullname: 'Referee Demo',
-    tournamentID: 't1',
-};
-
-// ยังไม่มี backend เชื่อมจริง — mock ใบสมัครของ 3 ทัวร์นาเมนต์เดียวกับที่ผูกไว้ใน TournamentHub
-const MOCK_APPLICATIONS: Application[] = [
-    {
-        appID: 'A-01',
-        tournamentID: 't1',
-        tournamentName: 'VCT Champions 2026',
-        game: 'Valorant',
-        requireAttachment: false,
-        submittedDate: '2026-07-24T09:00:00Z',
-        status: 'pending',
-        screenerNote: '',
-        reviewDate: null,
-        team: {
-            name: 'Crimson Dragon',
-            members: [
-                {
-                    id: 'USR-1001',
-                    name: 'John smith',
-                    isOwner: true,
-                    gameUID: '174478459',
-                    role: 'Starter',
-                    portfolio: { fileName: 'User_port.pdf', fileSize: 2 * 1024 * 1024, fileData: '#' },
-                },
-                {
-                    id: 'USR-1002',
-                    name: 'Oven Break',
-                    isOwner: false,
-                    gameUID: '174444444',
-                    role: 'Starter',
-                    portfolio: { fileName: 'User2_port.pdf', fileSize: 2 * 1024 * 1024, fileData: '#' },
-                },
-            ],
-        },
-    },
-    {
-        appID: 'A-02',
-        tournamentID: 't1',
-        tournamentName: 'VCT Champions 2026',
-        game: 'Valorant',
-        requireAttachment: false,
-        submittedDate: '2026-07-24T09:10:00Z',
-        status: 'approved',
-        screenerNote: 'Meets all requirements, approved',
-        reviewDate: '2026-07-25T02:00:00Z',
-        team: {
-            name: 'Dark Wolf',
-            members: [
-                { id: 'USR-1003', name: 'Dave Oven', isOwner: true, gameUID: '174400001', role: 'Starter' },
-                { id: 'USR-1004', name: 'Mika Sol', isOwner: false, gameUID: '174400002', role: 'Sub' },
-            ],
-        },
-    },
-    {
-        appID: 'A-03',
-        tournamentID: 't1',
-        tournamentName: 'VCT Champions 2026',
-        game: 'Valorant',
-        requireAttachment: false,
-        submittedDate: '2026-07-24T09:20:00Z',
-        status: 'pending',
-        screenerNote: '',
-        reviewDate: null,
-        team: {
-            name: 'pupped',
-            members: [{ id: 'USR-1005', name: 'Oliver Damson', isOwner: true, gameUID: '174400003', role: 'Starter' }],
-        },
-    },
-    {
-        appID: 'B-01',
-        tournamentID: 't2',
-        tournamentName: 'ESL Pro League Season 29',
-        game: 'CS2',
-        requireAttachment: true,
-        submittedDate: '2026-07-20T09:00:00Z',
-        status: 'pending',
-        screenerNote: '',
-        reviewDate: null,
-        team: {
-            name: 'Shadow Strikers',
-            members: [
-                {
-                    id: 'USR-2001',
-                    name: 'Nightshade',
-                    isOwner: true,
-                    gameUID: '188200001',
-                    role: 'Captain',
-                    portfolio: { fileName: 'nightshade_port.pdf', fileSize: 1.4 * 1024 * 1024, fileData: '#' },
-                },
-                { id: 'USR-2002', name: 'GhostWalker', isOwner: false, gameUID: '188200002', role: 'Player' },
-                {
-                    id: 'USR-2003',
-                    name: 'ViperX',
-                    isOwner: false,
-                    gameUID: '188200003',
-                    role: 'Stand-in',
-                    portfolio: { fileName: 'viperx_port.pdf', fileSize: 900 * 1024, fileData: '#' },
-                },
-            ],
-        },
-    },
-    {
-        appID: 'B-02',
-        tournamentID: 't2',
-        tournamentName: 'ESL Pro League Season 29',
-        game: 'CS2',
-        requireAttachment: true,
-        submittedDate: '2026-07-21T09:00:00Z',
-        status: 'approved',
-        screenerNote: 'All members attached portfolio',
-        reviewDate: '2026-07-22T10:00:00Z',
-        team: {
-            name: 'Neon Knights',
-            members: [
-                {
-                    id: 'USR-2004',
-                    name: 'Volt',
-                    isOwner: true,
-                    gameUID: '188200004',
-                    role: 'Captain',
-                    portfolio: { fileName: 'volt_port.pdf', fileSize: 1.1 * 1024 * 1024, fileData: '#' },
-                },
-                {
-                    id: 'USR-2005',
-                    name: 'Circuit',
-                    isOwner: false,
-                    gameUID: '188200005',
-                    role: 'Player',
-                    portfolio: { fileName: 'circuit_port.pdf', fileSize: 1.3 * 1024 * 1024, fileData: '#' },
-                },
-            ],
-        },
-    },
-    {
-        appID: 'B-03',
-        tournamentID: 't2',
-        tournamentName: 'ESL Pro League Season 29',
-        game: 'CS2',
-        requireAttachment: true,
-        submittedDate: '2026-07-19T09:00:00Z',
-        status: 'rejected',
-        screenerNote: 'Captain did not attach portfolio per tournament requirements',
-        reviewDate: '2026-07-20T11:00:00Z',
-        team: {
-            name: 'Titan Force',
-            members: [{ id: 'USR-2006', name: 'Colossus', isOwner: true, gameUID: '188200006', role: 'Captain' }],
-        },
-    },
-    {
-        appID: 'C-01',
-        tournamentID: 't3',
-        tournamentName: 'ROV Season 99',
-        game: 'RoV',
-        requireAttachment: false,
-        submittedDate: '2026-07-26T09:00:00Z',
-        status: 'pending',
-        screenerNote: '',
-        reviewDate: null,
-        team: {
-            name: 'Blaze Squad',
-            members: [
-                { id: 'USR-3001', name: 'Ashen', isOwner: true, gameUID: '199900001', role: 'Starter' },
-                { id: 'USR-3002', name: 'Rook', isOwner: false, gameUID: '199900002', role: 'Starter' },
-            ],
-        },
-    },
-];
+import { useAuth } from '../../hooks/useAuth';
+import * as applicationService from '../../services/applicationService';
+import { extractApiErrorMessage } from '../../lib/apiClient';
 
 function statusChipSx(status: ApplicationStatus) {
     if (status === 'approved') return { color: 'success.main', borderColor: 'success.main', bgcolor: 'rgba(59,165,93,0.12)' };
@@ -574,17 +398,12 @@ function ApplicationCard({ application, onReview }: { application: Application; 
     );
 }
 
-interface RefereeReviewProps {
-    referee?: Referee; // กรรมการที่ล็อกอินอยู่ — ใช้กรองว่าเห็นเฉพาะใบสมัครของทัวร์นาเมนต์ตัวเองเท่านั้น
-}
-
-export default function RefereeReview({ referee = DEFAULT_REFEREE }: RefereeReviewProps) {
-    // โหลดจาก localStorage ทันทีตอนสร้าง state (lazy initializer) แทนการตั้งค่าเริ่มต้นเป็น MOCK_APPLICATIONS/[]
-    // แล้วค่อยไปโหลดจริงใน useEffect ทีหลัง — ของเดิมทำให้ frame แรกเรนเดอร์ด้วยข้อมูล mock ที่ logs ยังว่างอยู่
-    // (เห็น pending ผิดจากของจริงชั่วขณะ) แล้วพอ effect โหลดเสร็จค่อย re-render ทับ ทำให้ตัวเลข/การ์ดกระพริบ
-    const [applications, setApplications] = useState<Application[]>(() => loadApplicationsFromStorage(MOCK_APPLICATIONS));
-    // ประวัติการตรวจทั้งหมด — ตอนนี้เป็น "แหล่งความจริง" ของสถานะใบสมัคร แทนการแก้ applications.status ตรงๆ
-    const [logs, setLogs] = useState<ReviewLog[]>(() => loadReviewLogsFromStorage());
+export default function RefereeReview() {
+    const { user } = useAuth();
+    const [referee, setReferee] = useState<Referee | null>(null);
+    const [applications, setApplications] = useState<Application[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
     const [dateFrom, setDateFrom] = useState(''); // yyyy-mm-dd, '' = ไม่กรอง
     const [dateTo, setDateTo] = useState('');
@@ -593,52 +412,43 @@ export default function RefereeReview({ referee = DEFAULT_REFEREE }: RefereeRevi
     const [pendingDecision, setPendingDecision] = useState<{ status: ApplicationStatus; note: string } | null>(null);
     const navigate = useNavigate();
 
-    // sync กลับลง localStorage ทุกครั้งที่ applications เปลี่ยน (ตอนนี้จะมีแค่ตอนมีใบสมัครใหม่จากแท็บอื่นเข้ามา
-    // เพราะข้อมูลตอน mount โหลดผ่าน lazy initializer ด้านบนแล้ว — ไม่มีการแก้ status/screenerNote/reviewDate
-    // ของใบสมัครโดยตรงอีกต่อไป ดู handleConfirmDecide ด้านล่าง)
-    useEffect(() => {
-        saveApplicationsToStorage(applications);
-    }, [applications]);
+    const reload = useCallback(async () => {
+        if (!user) return;
+        setLoading(true);
+        setError('');
+        try {
+            // ยังไม่มี endpoint "referee ของฉัน" โดยตรง — หาเอาจาก listReferees() แล้ว match profile_id
+            const referees = await applicationService.listReferees();
+            const mine = referees.find((r) => r.profile_id === user.id) ?? null;
+            setReferee(mine ? { refereeID: mine.id, fullname: mine.fullname, tournamentID: mine.tournament_id } : null);
 
-    // referee เห็นได้เฉพาะใบสมัครของทัวร์นาเมนต์ที่ตัวเองผูกไว้ (referee.tournamentID) เท่านั้น
-    const myApplications = useMemo(
-        () => applications.filter((a) => a.tournamentID === referee.tournamentID),
-        [applications, referee.tournamentID]
-    );
-
-    // log ล่าสุดของแต่ละใบสมัคร (เทียบจาก reviewDate) — ใช้เป็นตัวกำหนด "สถานะปัจจุบัน" ของใบสมัครนั้น
-    // แทนที่จะอ่านจาก applications[].status ตรงๆ เพราะตอนนี้ approve/reject ไม่แก้ตัว Application แล้ว
-    // มีแค่การเพิ่ม ReviewLog ใหม่เข้าไปเท่านั้น (Application "1"───"*" ReviewLog ตรวจซ้ำได้หลายครั้ง)
-    const latestLogByAppID = useMemo(() => {
-        const map = new Map<string, ReviewLog>();
-        for (const l of logs) {
-            const current = map.get(l.appID);
-            if (!current || new Date(l.reviewDate).getTime() > new Date(current.reviewDate).getTime()) {
-                map.set(l.appID, l);
+            if (mine) {
+                const apps = await applicationService.listApplicationsForTournament(mine.tournament_id);
+                setApplications(apps.map(mapApplication));
+            } else {
+                setApplications([]);
             }
+        } catch (err) {
+            setError(extractApiErrorMessage(err));
+        } finally {
+            setLoading(false);
         }
-        return map;
-    }, [logs]);
+    }, [user]);
 
-    // ใบสมัครสำหรับแสดงผล — status/screenerNote/reviewDate มาจาก log ล่าสุดถ้ามี ไม่งั้น fallback เป็นค่าดั้งเดิมของใบสมัคร (เช่น 'pending')
-    // ตัว applications ต้นทางไม่ถูกแก้ไขอีกต่อไป เก็บไว้เป็นแค่ snapshot ตอนสมัคร
-    const viewApplications = useMemo(
-        () =>
-            myApplications.map((a) => {
-                const latest = latestLogByAppID.get(a.appID);
-                if (!latest) return a;
-                return { ...a, status: latest.action, screenerNote: latest.note, reviewDate: latest.reviewDate };
-            }),
-        [myApplications, latestLogByAppID]
-    );
+    useEffect(() => {
+        void reload();
+    }, [reload]);
+
+    // referee เห็นได้เฉพาะใบสมัครของทัวร์นาเมนต์ที่ตัวเองผูกไว้เท่านั้น (already filtered by the API call above)
+    const myApplications = applications;
 
     const myTournamentName = myApplications[0]?.tournamentName ?? null;
 
-    // เหลือแค่ใบสมัครที่ยัง pending เท่านั้น — พอ referee approve/reject ไปแล้ว ใบสมัครจะย้ายไปอยู่ที่หน้า
-    // Review Log แทน (ดูได้ผ่านปุ่ม Review Log ด้านบน) และจะไม่กลับมาแสดง/แก้ไขซ้ำที่หน้านี้ได้อีก
+    // เหลือแค่ใบสมัครที่ยัง pending เท่านั้น — Application.status เป็นค่าจริงจาก backend อยู่แล้ว
+    // (ApplicationController.Review แก้ status ตรงๆ) ไม่ต้อง derive จาก ReviewLog เหมือนของเดิมอีกต่อไป
     const pendingApplications = useMemo(
-        () => viewApplications.filter((a) => a.status === 'pending'),
-        [viewApplications]
+        () => myApplications.filter((a) => a.status === 'pending'),
+        [myApplications]
     );
 
     const filtered = useMemo(() => {
@@ -681,47 +491,52 @@ export default function RefereeReview({ referee = DEFAULT_REFEREE }: RefereeRevi
         setPendingDecision({ status, note });
     };
 
-    // commit จริงหลัง referee กดยืนยันใน ConfirmDialog เท่านั้น
-    // เปลี่ยนพฤติกรรม: ไม่แก้ status/screenerNote/reviewDate ของ Application ต้นทางอีกต่อไป
-    // (ตัว applications เก็บไว้เป็นแค่ snapshot ตอนสมัครเท่านั้น) — สิ่งเดียวที่เกิดขึ้นตอน approve/reject
-    // คือเพิ่ม ReviewLog รายการใหม่ (ใครตรวจ, ตรวจเมื่อไหร่, ทัวร์นาเมนต์ไหน, ผลตรวจแบบไหน)
-    // แล้วให้ viewApplications ด้านบน derive สถานะที่แสดงผลจาก log ล่าสุดแทน
-    const handleConfirmDecide = () => {
+    // commit จริงหลัง referee กดยืนยันใน ConfirmDialog เท่านั้น — เรียก API จริง (backend อัปเดต
+    // Application.status, สร้าง WhitelistTeam ถ้า approve, และเก็บ ReviewLog ให้เองทั้งหมด)
+    const handleConfirmDecide = async () => {
         if (!reviewTargetID || !pendingDecision) return;
         const { status, note } = pendingDecision;
-        const target = pendingApplications.find((a) => a.appID === reviewTargetID);
-        const reviewedAt = new Date().toISOString();
-        if (target && (status === 'approved' || status === 'rejected')) {
-            // แจ้งเตือนทีมหลังตัดสินใจแล้ว (approve/reject เท่านั้น ไม่แจ้งตอนยัง pending)
-            notifyApplicationDecision(target, target.team.name, status, note);
-            // Application "1"───"0..1" WhitelistTeam ตาม class diagram — approve แล้วสร้าง/เปิดใช้งานอีกครั้ง
-            // reject (รวมถึงกรณีเปลี่ยนใจจาก approved มาเป็น rejected ทีหลัง) ให้ปิดการใช้งานแทนการลบทิ้ง
-            if (status === 'approved') {
-                addToWhitelist(target);
-            } else {
-                deactivateWhitelistEntry(target.appID);
-            }
-            // เก็บประวัติการตรวจ — snapshot ของใบสมัคร ณ ตอนตรวจ (รวม note/status ล่าสุด) ไว้ดูย้อนหลังใน ReviewLog page
-            // นี่คือจุดเดียวที่ status/note/reviewDate ของการตรวจครั้งนี้ถูกเก็บ — ไม่ใช่บน Application แล้ว
-            const newLog = addReviewLog({
-                appID: target.appID,
-                tournamentID: target.tournamentID,
-                tournamentName: target.tournamentName,
-                game: target.game,
-                teamName: target.team.name,
-                action: status,
+        try {
+            await applicationService.reviewApplication(
+                reviewTargetID,
+                status === 'approved' ? 'Approved' : 'Rejected',
                 note,
-                refereeID: referee.refereeID,
-                reviewerName: referee.fullname,
-                reviewDate: reviewedAt,
-                applicationSnapshot: { ...target, status, screenerNote: note, reviewDate: reviewedAt },
-            });
-            // อัปเดต state ทันทีไม่ต้องรอ reload — ตาราง/การ์ด/tab ทั้งหมดจะเห็นสถานะใหม่ผ่าน viewApplications
-            setLogs((prev) => [newLog, ...prev]);
+            );
+            await reload();
+        } catch (err) {
+            window.alert(extractApiErrorMessage(err));
+        } finally {
+            setPendingDecision(null);
+            setReviewTargetID(null);
         }
-        setPendingDecision(null);
-        setReviewTargetID(null);
     };
+
+    if (loading) {
+        return (
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%' }}>
+                <CircularProgress />
+            </Box>
+        );
+    }
+
+    if (error) {
+        return (
+            <Box sx={{ p: 4 }}>
+                <Alert severity="error">{error}</Alert>
+            </Box>
+        );
+    }
+
+    if (!referee) {
+        return (
+            <Box sx={{ p: 4 }}>
+                <Alert severity="warning">
+                    Your account is not registered as a Referee for any tournament — ask an Admin to assign you the
+                    Referee role and link a Referee record before you can review applications.
+                </Alert>
+            </Box>
+        );
+    }
 
     return (
         <Box sx={{ p: 4, maxWidth: 1100, mx: 'auto', width: '100%' }}>

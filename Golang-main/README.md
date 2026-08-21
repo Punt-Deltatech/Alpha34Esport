@@ -59,10 +59,12 @@ Results, Prize Management, PR & Announcement, Reporting, Ticketing).
 
 ## Setup
 
-1. Create a Supabase project (or use an existing one).
+1. Start Supabase — either:
+   - **Local (dev):** from the repo root, `npx supabase start` (see `../supabase/`). Prints the local `API URL`, `DB URL`, and `JWT secret` you need for step 2.
+   - **Cloud:** create/use a project at supabase.com and grab the same values from Project Settings -> Database / API.
 2. Copy `.env` and fill in:
-   - `DATABASE_URL` — Project Settings -> Database -> Connection string
-   - `SUPABASE_JWT_SECRET` — Project Settings -> API -> JWT Secret
+   - `DATABASE_URL` — the `DB URL` from `supabase start` (local) or Project Settings -> Database -> Connection string (cloud)
+   - `SUPABASE_JWT_SECRET` — the `JWT secret` from `supabase start` (local) or Project Settings -> API -> JWT Secret (cloud)
 3. Download dependencies:
 
 ```bash

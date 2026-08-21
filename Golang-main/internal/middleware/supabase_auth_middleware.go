@@ -21,7 +21,7 @@ import (
 // lazily on first sight, in case the `on_auth_user_created` Postgres
 // trigger hasn't been set up on this Supabase project yet — and stores the
 // Profile ID in the Gin context for downstream handlers.
-func SupabaseAuthMiddleware(db *gorm.DB, jwtSecret string) gin.HandlerFunc {
+func SupabaseAuthMiddleware(db *gorm.DB, supabaseURL, jwtSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
@@ -31,7 +31,7 @@ func SupabaseAuthMiddleware(db *gorm.DB, jwtSecret string) gin.HandlerFunc {
 		}
 
 		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		claims, err := utils.VerifySupabaseJWT(tokenString, jwtSecret)
+		claims, err := utils.VerifySupabaseJWT(tokenString, supabaseURL, jwtSecret)
 		if err != nil {
 			utils.JSONError(c, http.StatusUnauthorized, "invalid token", err.Error())
 			c.Abort()

@@ -99,6 +99,9 @@ export interface Team {
   updated_at: string;
 }
 
+// Merged shape returned by GET /notifications — the base Notification row
+// plus whichever subclass fields it has (see NotificationController.ListMine
+// on the Go side, which stitches these together manually).
 export interface AppNotification {
   id: string;
   profile_id: string;
@@ -106,6 +109,13 @@ export interface AppNotification {
   is_read: boolean;
   created_date: string;
   type: 'invitation' | 'general';
+  // present when type === 'invitation'
+  inviter_team_id?: string;
+  action_status?: 'pending' | 'accepted' | 'rejected';
+  // present when type === 'general'
+  message?: string;
+  category?: string;
+  reference_id?: string;
 }
 
 export interface InvitationNotification {
@@ -148,6 +158,17 @@ export interface WhitelistTeam {
   application_id: string;
   tournament_id: string;
   team_name: string;
+}
+
+export interface ReviewLog {
+  id: string;
+  application_id: string;
+  tournament_id: string;
+  action: 'Approved' | 'Rejected';
+  referee_id: string;
+  reviewer_name: string;
+  review_date: string;
+  screener_note: string;
 }
 
 // ── Module 6/7/8: Scheduling / Coordination / Match Results ────────────

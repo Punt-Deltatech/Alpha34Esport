@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   IconButton,
   Badge,
@@ -12,25 +12,10 @@ import CampaignIcon from '@mui/icons-material/Campaign';
 import DeleteIcon from '@mui/icons-material/Delete';
 import ScrollBox from '../../components/ScrollBox';
 import NotificationDetailDialog from './NotificationDetailDialog';
-// Changed from '../Team_types' to './Notification_types' — AppNotification is declared here, not in Team_types
 import type { AppNotification } from '../Types/Notification_types';
-import { joinTeamAsMember } from '../Types/Team_types';
-
-const STORAGE_KEY = 'esports_notifications';
-
-// Initial data: only the welcome notification, no other mock data
-const INITIAL_NOTIFICATIONS: AppNotification[] = [
-  {
-    kind: 'general',
-    notificationID: 'welcome_1',
-    title: 'Welcome',
-    isRead: false,
-    createdDate: new Date().toISOString(),
-    message: 'Welcome to 34Esport!',
-    category: 'system',
-    referenceID: 'welcome',
-  },
-];
+import { mapNotification } from '../Types/Notification_types';
+import * as notificationService from '../../services/notificationService';
+import { useAuth } from '../../hooks/useAuth';
 
 function formatRelativeTime(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -43,84 +28,59 @@ function formatRelativeTime(iso: string): string {
   return `${days} days ago`;
 }
 
+// Backed by the real Go backend now (see ../../services/notificationService.ts) — pulls the
+// caller's notifications on mount and after every mutation, instead of reading/writing localStorage.
 export default function NotificationBell() {
+  const { user } = useAuth();
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
   const [selectedID, setSelectedID] = useState<string | null>(null);
 
-  const loadFromStorage = () => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      setNotifications(JSON.parse(saved));
-    } else {
-      setNotifications(INITIAL_NOTIFICATIONS);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_NOTIFICATIONS));
+  const reload = useCallback(async () => {
+    if (!user) return;
+    try {
+      const list = await notificationService.listMyNotifications();
+      setNotifications(list.map(mapNotification));
+    } catch {
+      // Bell is best-effort UI — a failed refresh just leaves the previous list showing.
     }
-  };
+  }, [user]);
 
   useEffect(() => {
-    loadFromStorage();
-
-    // Writing to localStorage from another tab/window automatically fires the 'storage' event
-    // But writing from the same tab (e.g. RefereeReview calling notifyApplicationDecision) won't fire this event
-    // So a custom event 'esports-notifications-changed' is also needed, to let the bell refresh live within the same tab too
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === STORAGE_KEY) loadFromStorage();
-    };
-    const handleCustom = () => loadFromStorage();
-
-    window.addEventListener('storage', handleStorage);
-    window.addEventListener('esports-notifications-changed', handleCustom);
-    return () => {
-      window.removeEventListener('storage', handleStorage);
-      window.removeEventListener('esports-notifications-changed', handleCustom);
-    };
-  }, []);
-
-  const persist = (updated: AppNotification[]) => {
-    setNotifications(updated);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-  };
+    void reload();
+  }, [reload]);
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
 
   const handleOpen = (e: React.MouseEvent<HTMLButtonElement>) => setAnchorEl(e.currentTarget);
   const handleClose = () => setAnchorEl(null);
 
-  const markAsRead = (notificationID: string) => {
-    persist(notifications.map((n) => (n.notificationID === notificationID ? { ...n, isRead: true } : n)));
+  const markAsRead = async (notificationID: string) => {
+    setNotifications((prev) => prev.map((n) => (n.notificationID === notificationID ? { ...n, isRead: true } : n)));
+    try {
+      await notificationService.markNotificationRead(notificationID);
+    } catch {
+      void reload(); // out of sync with the server — resync instead of leaving a stale optimistic update
+    }
   };
 
-  const handleInvitationAction = (notificationID: string, status: 'accepted' | 'declined') => {
-    const target = notifications.find((n) => n.notificationID === notificationID);
-    if (!target || target.kind !== 'invitation') return;
-
-    // Clicking "Accept" must actually add the user to the team, not just change the notification card status
-    if (status === 'accepted') {
-      const result = joinTeamAsMember(target.inviteeUserID);
-      if (!result.ok) {
-        const messages: Record<typeof result.reason, string> = {
-          'no-team': 'Your team could not be found. Please create a team before accepting the invitation.',
-          'already-member': 'You are already a member of this team.',
-          'roster-full': 'The team is full. Cannot add more members right now.',
-        };
-        window.alert(messages[result.reason]);
-        return; // Don't change the invitation status, in case they resolve the issue and come back to accept again
-      }
+  const handleInvitationAction = async (notificationID: string, status: 'accepted' | 'declined') => {
+    try {
+      await notificationService.respondToInvitation(notificationID, status === 'accepted');
+      await reload(); // accepting also adds the caller to the team server-side — no local roster bookkeeping needed here
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Failed to respond to invitation');
     }
-
-    persist(
-      notifications.map((n) =>
-        n.notificationID === notificationID && n.kind === 'invitation'
-          ? { ...n, actionStatus: status, isRead: true }
-          : n
-      )
-    );
   };
 
   // Remove the notification from the list (no confirm needed since it's a lightweight action that doesn't affect team data)
-  const handleDeleteNotification = (notificationID: string) => {
-    persist(notifications.filter((n) => n.notificationID !== notificationID));
+  const handleDeleteNotification = async (notificationID: string) => {
+    setNotifications((prev) => prev.filter((n) => n.notificationID !== notificationID));
+    try {
+      await notificationService.deleteNotification(notificationID);
+    } catch {
+      void reload();
+    }
   };
 
   const selected = notifications.find((n) => n.notificationID === selectedID) ?? null;
@@ -168,8 +128,6 @@ export default function NotificationBell() {
             </Typography>
           </Box>
         ) : (
-          // The list can be longer than the screen, so scroll with the shared ScrollBox (thin themed scrollbar, like other pages in the app)
-          // instead of letting the Popover Paper scroll on its own (thick default browser scrollbar)
           <ScrollBox sx={{ maxHeight: 420 }}>
             {notifications
               .slice()
@@ -179,7 +137,7 @@ export default function NotificationBell() {
                   {idx > 0 && <Box sx={{ borderTop: '1px solid', borderColor: 'divider' }} />}
                   <Box
                     onClick={() => {
-                      markAsRead(n.notificationID);
+                      void markAsRead(n.notificationID);
                       setSelectedID(n.notificationID);
                     }}
                     sx={{
@@ -209,7 +167,6 @@ export default function NotificationBell() {
                         )}
                       </Box>
 
-                      {/* Single-line preview — full details can be viewed in the popup when clicked (NotificationDetailDialog) */}
                       <Typography
                         variant="caption"
                         sx={{
@@ -229,12 +186,11 @@ export default function NotificationBell() {
                       </Typography>
                     </Box>
 
-                    {/* Delete notification button */}
                     <IconButton
                       size="small"
                       onClick={(e) => {
-                        e.stopPropagation(); // Prevent triggering the detail view when clicking delete
-                        handleDeleteNotification(n.notificationID);
+                        e.stopPropagation();
+                        void handleDeleteNotification(n.notificationID);
                       }}
                       aria-label="Delete notification"
                       sx={{
@@ -256,8 +212,8 @@ export default function NotificationBell() {
         <NotificationDetailDialog
           notification={selected}
           onClose={() => setSelectedID(null)}
-          onDelete={handleDeleteNotification}
-          onInvitationAction={handleInvitationAction}
+          onDelete={(id) => void handleDeleteNotification(id)}
+          onInvitationAction={(id, status) => void handleInvitationAction(id, status)}
         />
       )}
     </>

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
     Box,
     Card,
@@ -12,6 +12,8 @@ import {
     IconButton,
     Avatar,
     Divider,
+    CircularProgress,
+    Alert,
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import SearchIcon from '@mui/icons-material/Search';
@@ -25,16 +27,11 @@ import BadgeIcon from '@mui/icons-material/Badge';
 import GavelIcon from '@mui/icons-material/Gavel';
 import HistoryIcon from '@mui/icons-material/History';
 import type { ApplicantMember, Referee, ReviewAction, ReviewLog } from '../Types/App_Referee_types';
-import { loadReviewLogsFromStorage } from '../Types/App_Referee_types';
+import { mapApplication, mapReviewLog } from '../Types/App_Referee_types';
 import ScrollBox from '../../components/ScrollBox';
-
-// กรรมการ demo — ค่าเดียวกับใน RefereeReview.tsx (ยังไม่มีระบบ auth/session ของผู้ใช้จริงในสโคปนี้
-// พอมี auth แล้วให้ทั้งสองหน้าดึงจาก context/hook เดียวกันแทนการ hardcode ซ้ำสองที่)
-const DEFAULT_REFEREE: Referee = {
-    refereeID: 'REF-001',
-    fullname: 'Referee Demo',
-    tournamentID: 't1',
-};
+import { useAuth } from '../../hooks/useAuth';
+import * as applicationService from '../../services/applicationService';
+import { extractApiErrorMessage } from '../../lib/apiClient';
 
 const ACTION_TABS: { value: 'all' | ReviewAction; label: string }[] = [
     { value: 'all', label: 'All History' },
@@ -374,21 +371,56 @@ function LogCard({ log, onView }: { log: ReviewLog; onView: () => void }) {
     );
 }
 
-interface ReviewLogPageProps {
-    referee?: Referee; // กรรมการที่ล็อกอินอยู่ — ใช้กรองว่าเห็นเฉพาะประวัติของทัวร์นาเมนต์ตัวเองเท่านั้น เหมือน RefereeReview.tsx
-}
-
-export default function ReviewLogPage({ referee = DEFAULT_REFEREE }: ReviewLogPageProps) {
+export default function ReviewLogPage() {
+    const { user } = useAuth();
     const navigate = useNavigate();
-    const [logs, setLogs] = useState<ReviewLog[]>(() => loadReviewLogsFromStorage());
+    const [referee, setReferee] = useState<Referee | null>(null);
+    const [logs, setLogs] = useState<ReviewLog[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
     const [actionFilter, setActionFilter] = useState<'all' | ReviewAction>('all');
     const [searchQuery, setSearchQuery] = useState('');
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
     const [viewLogID, setViewLogID] = useState<string | null>(null);
 
-    // referee เห็นได้เฉพาะประวัติของทัวร์นาเมนต์ที่ตัวเองผูกไว้ (referee.tournamentID) เท่านั้น เหมือนหน้า Review
-    const myLogs = useMemo(() => logs.filter((l) => l.tournamentID === referee.tournamentID), [logs, referee.tournamentID]);
+    useEffect(() => {
+        if (!user) return;
+        let cancelled = false;
+        setLoading(true);
+        setError('');
+        (async () => {
+            try {
+                const referees = await applicationService.listReferees();
+                const mine = referees.find((r) => r.profile_id === user.id) ?? null;
+                if (!mine) {
+                    if (!cancelled) {
+                        setReferee(null);
+                        setLogs([]);
+                    }
+                    return;
+                }
+                const [apiLogs, apiApplications] = await Promise.all([
+                    applicationService.listReviewLogsForTournament(mine.tournament_id),
+                    applicationService.listApplicationsForTournament(mine.tournament_id),
+                ]);
+                if (cancelled) return;
+                const applicationsByID = new Map(apiApplications.map((a) => [a.id, mapApplication(a)]));
+                setReferee({ refereeID: mine.id, fullname: mine.fullname, tournamentID: mine.tournament_id });
+                setLogs(apiLogs.map((l) => mapReviewLog(l, applicationsByID)));
+            } catch (err) {
+                if (!cancelled) setError(extractApiErrorMessage(err));
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [user]);
+
+    // logs already scoped to this referee's tournament by the fetch above
+    const myLogs = logs;
 
     const counts = useMemo(
         () => ({
@@ -420,6 +452,30 @@ export default function ReviewLogPage({ referee = DEFAULT_REFEREE }: ReviewLogPa
     }, [myLogs, actionFilter, searchQuery, dateFrom, dateTo]);
 
     const viewLog = filtered.find((l) => l.logID === viewLogID) ?? myLogs.find((l) => l.logID === viewLogID) ?? null;
+
+    if (loading) {
+        return (
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%' }}>
+                <CircularProgress />
+            </Box>
+        );
+    }
+
+    if (error) {
+        return (
+            <Box sx={{ p: 4 }}>
+                <Alert severity="error">{error}</Alert>
+            </Box>
+        );
+    }
+
+    if (!referee) {
+        return (
+            <Box sx={{ p: 4 }}>
+                <Alert severity="warning">Your account is not registered as a Referee for any tournament.</Alert>
+            </Box>
+        );
+    }
 
     return (
         <Box sx={{ p: 4, maxWidth: 1100, mx: 'auto', width: '100%' }}>

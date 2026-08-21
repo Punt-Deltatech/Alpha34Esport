@@ -48,7 +48,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	bannerCRUD := controllers.NewCRUD[models.Banner](db)
 
 	api := router.Group("/api/v1")
-	api.Use(middleware.SupabaseAuthMiddleware(db, cfg.SupabaseJWTSecret))
+	api.Use(middleware.SupabaseAuthMiddleware(db, cfg.SupabaseURL, cfg.SupabaseJWTSecret))
 
 	requireRole := func(names ...string) gin.HandlerFunc { return middleware.RequireRole(db, names...) }
 
@@ -87,6 +87,8 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 		tournaments.GET("/:id/history", tournamentCtrl.History)
 		// nested reads/actions from other modules — all use the same ":id" param name
 		tournaments.GET("/:id/applications", requireRole("Admin", "Organizer", "Referee"), applicationCtrl.ListByTournament)
+		tournaments.GET("/:id/review-logs", requireRole("Admin", "Organizer", "Referee"), applicationCtrl.ListReviewLogsForTournament)
+		tournaments.GET("/:id/whitelist-teams", applicationCtrl.ListWhitelistForTournament)
 		tournaments.GET("/:id/matches", matchCtrl.ListByTournament)
 		tournaments.POST("/:id/matches/generate-bracket", requireRole("Admin", "Organizer"), matchCtrl.GenerateBracket)
 		tournaments.GET("/:id/financial-summary", requireRole("Admin", "Organizer"), reportingCtrl.FinancialSummaryFor)
@@ -100,9 +102,12 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 		teams.POST("", teamCtrl.Create)
 		teams.PUT("/:id", teamCtrl.Update)
 		teams.DELETE("/:id", teamCtrl.Delete)
+		teams.POST("/:id/invite", teamCtrl.InviteMember)
 		teams.POST("/:id/members", teamCtrl.AddMember)
 		teams.PUT("/:id/members/:memberId", teamCtrl.UpdateMember)
 		teams.DELETE("/:id/members/:memberId", teamCtrl.RemoveMember)
+		teams.POST("/:id/members/:memberId/portfolio", teamCtrl.SetMemberPortfolio)
+		teams.GET("/:id/applications", applicationCtrl.ListByTeam)
 	}
 	schedules := api.Group("/schedules")
 	{
@@ -116,6 +121,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 		notifications.GET("", notificationCtrl.ListMine)
 		notifications.PUT("/:id/read", notificationCtrl.MarkRead)
 		notifications.POST("/:id/respond", notificationCtrl.RespondInvitation)
+		notifications.DELETE("/:id", notificationCtrl.Delete)
 	}
 
 	// ── Module 5: Registration & Screening ─────────────────────────────
